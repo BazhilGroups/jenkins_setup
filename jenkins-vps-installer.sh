@@ -23,7 +23,7 @@
 #
 # 1. Point your DNS A record to this VPS:
 #
-#    jenkins.example.com -> YOUR_VPS_PUBLIC_IP
+#    jenkins.skiezdigital.com -> YOUR_VPS_PUBLIC_IP
 #
 # 2. Make sure TCP 80 and 443 are reachable.
 #
@@ -54,7 +54,7 @@ set -Eeuo pipefail
 # ------------------------------------------------------------
 
 # Public domain used to access Jenkins.
-JENKINS_DOMAIN="jenkins.example.com"
+JENKINS_DOMAIN="jenkins.skiezdigital.com"
 
 # ------------------------------------------------------------
 # 2. JENKINS SERVER
@@ -290,10 +290,6 @@ fi
 # ============================================================
 # CONFIGURATION VALIDATION
 # ============================================================
-
-if [[ "$JENKINS_DOMAIN" == "jenkins.example.com" ]]; then
-    error_exit "Change JENKINS_DOMAIN before running the script."
-fi
 
 if [[ -z "$JENKINS_DOMAIN" ]]; then
     error_exit "JENKINS_DOMAIN cannot be empty."
