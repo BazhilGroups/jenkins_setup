@@ -424,11 +424,20 @@ if (( CURRENT_SWAP_MB < TARGET_SWAP_MB )); then
 
     mkswap "$SWAP_FILE"
 
-    swapon "$SWAP_FILE"
+    if swapon "$SWAP_FILE"; then
 
-    echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
+        echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
 
-    echo "Additional swap enabled."
+        echo "Additional swap enabled."
+
+    else
+
+        echo "WARNING: The VPS environment does not permit enabling swap (swapon)."
+        echo "Continuing without the additional swap file."
+
+        rm -f "$SWAP_FILE"
+
+    fi
 
 else
 
