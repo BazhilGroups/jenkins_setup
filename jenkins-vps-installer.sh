@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 
 # ============================================================
@@ -57,10 +56,6 @@ set -Eeuo pipefail
 # Public domain used to access Jenkins.
 JENKINS_DOMAIN="jenkins.example.com"
 
-# Email address used by Let's Encrypt.
-LETSENCRYPT_EMAIL="your-email@example.com"
-
-
 # ------------------------------------------------------------
 # 2. JENKINS SERVER
 # ------------------------------------------------------------
@@ -77,6 +72,9 @@ JENKINS_USER="jenkins"
 
 # Jenkins systemd service name.
 JENKINS_SERVICE="jenkins"
+
+# Docker systemd service name.
+DOCKER_SERVICE="docker"
 
 # Jenkins initial administrator password file.
 JENKINS_PASSWORD_FILE="/var/lib/jenkins/secrets/initialAdminPassword"
@@ -203,6 +201,7 @@ BASE_PACKAGES=(
     software-properties-common
     unzip
     git
+    python3
 )
 
 # Java packages required by Jenkins.
@@ -296,16 +295,8 @@ if [[ "$JENKINS_DOMAIN" == "jenkins.example.com" ]]; then
     error_exit "Change JENKINS_DOMAIN before running the script."
 fi
 
-if [[ "$LETSENCRYPT_EMAIL" == "your-email@example.com" ]]; then
-    error_exit "Change LETSENCRYPT_EMAIL before running the script."
-fi
-
 if [[ -z "$JENKINS_DOMAIN" ]]; then
     error_exit "JENKINS_DOMAIN cannot be empty."
-fi
-
-if [[ -z "$LETSENCRYPT_EMAIL" ]]; then
-    error_exit "LETSENCRYPT_EMAIL cannot be empty."
 fi
 
 if [[ ! "$JENKINS_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
@@ -838,7 +829,7 @@ if [[ "$SSL_READY" == "true" ]]; then
         --nginx \
         --non-interactive \
         --agree-tos \
-        --email "$LETSENCRYPT_EMAIL" \
+        --register-unsafely-without-email \
         --redirect \
         -d "$JENKINS_DOMAIN"
 
@@ -1087,4 +1078,3 @@ echo
 echo "============================================================"
 echo "JENKINS INSTALLATION FINISHED"
 echo "============================================================"
-```
