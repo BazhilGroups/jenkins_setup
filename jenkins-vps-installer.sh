@@ -118,10 +118,11 @@ MIN_RAM_MB="2048"
 # 5. EXISTING TRAEFIK REVERSE PROXY
 # ------------------------------------------------------------
 
-# This installer does not install, start, stop, or configure a reverse proxy.
-# Traefik is expected to be managed by the existing Docker deployment panel.
-TRAEFIK_CONTAINER_NAME="traefik"
-TRAEFIK_HOST_TARGET="host.docker.internal"
+# Traefik is managed by the existing Docker deployment panel. The installer
+# only adds its own Jenkins dynamic configuration file.
+TRAEFIK_CONTAINER_NAME="dokploy-traefik"
+TRAEFIK_DYNAMIC_DIR="/etc/dokploy/traefik/dynamic"
+TRAEFIK_JENKINS_CONFIG="${TRAEFIK_DYNAMIC_DIR}/jenkins.yml"
 TRAEFIK_JENKINS_PORT="8080"
 
 
@@ -226,6 +227,7 @@ TOTAL_RAM_MB="0"
 AVAILABLE_DISK_GB="0"
 CURRENT_SWAP_MB="0"
 REQUIRED_SWAP_MB="0"
+TRAEFIK_GATEWAY=""
 JAVA_MAJOR=""
 
 
@@ -616,7 +618,7 @@ echo "Jenkins is running."
 log "STEP 9 - Checking existing Docker Traefik proxy"
 
 # Traefik owns the public ports. This installer deliberately does not
-# install or configure Nginx, Certbot, UFW, or Traefik.
+# install, stop, restart, or replace the existing Traefik container.
 if ! docker ps --format '{{.Names}}' | grep -Fxq "$TRAEFIK_CONTAINER_NAME"; then
     error_exit "Docker Traefik container '${TRAEFIK_CONTAINER_NAME}' is not running. Refusing to modify the existing proxy."
 fi
@@ -627,8 +629,61 @@ if ! docker ps --format '{{.Names}} {{.Ports}}' | grep -Eq "^${TRAEFIK_CONTAINER
 fi
 
 echo "Traefik container : ${TRAEFIK_CONTAINER_NAME}"
-echo "Jenkins target     : ${TRAEFIK_HOST_TARGET}:${TRAEFIK_JENKINS_PORT}"
-echo "No Nginx, Certbot, firewall, or Traefik configuration was changed."
+
+if [[ ! -d "$TRAEFIK_DYNAMIC_DIR" ]]; then
+    error_exit "Traefik dynamic configuration directory does not exist: ${TRAEFIK_DYNAMIC_DIR}"
+fi
+
+TRAEFIK_GATEWAY=$(
+    docker inspect \
+        -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}' \
+        "$TRAEFIK_CONTAINER_NAME"
+)
+
+if [[ -z "$TRAEFIK_GATEWAY" ]]; then
+    error_exit "Could not determine the Docker gateway used by Traefik."
+fi
+
+cat > "$TRAEFIK_JENKINS_CONFIG" <<EOF
+http:
+  routers:
+    jenkins-http:
+      rule: "Host(\`${JENKINS_DOMAIN}\`)"
+      entryPoints:
+        - web
+      middlewares:
+        - jenkins-https-redirect
+      service: jenkins-service
+
+    jenkins-https:
+      rule: "Host(\`${JENKINS_DOMAIN}\`)"
+      entryPoints:
+        - websecure
+      service: jenkins-service
+      tls:
+        certResolver: letsencrypt
+
+  middlewares:
+    jenkins-https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  services:
+    jenkins-service:
+      loadBalancer:
+        servers:
+          - url: http://${TRAEFIK_GATEWAY}:${TRAEFIK_JENKINS_PORT}
+        passHostHeader: true
+EOF
+
+chmod 0644 "$TRAEFIK_JENKINS_CONFIG"
+
+echo "Jenkins Traefik config: ${TRAEFIK_JENKINS_CONFIG}"
+echo "Jenkins target        : ${TRAEFIK_GATEWAY}:${TRAEFIK_JENKINS_PORT}"
+echo "Traefik will reload the file automatically."
+echo "No Nginx, Certbot, firewall, or Traefik container changes were made."
+echo "Jenkins Traefik dynamic configuration was created."
 
 
 # ============================================================
