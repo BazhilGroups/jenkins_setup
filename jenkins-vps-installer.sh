@@ -12,9 +12,7 @@
 #   - Java 21
 #   - Jenkins LTS
 #   - Jenkins -> Docker access
-#   - Nginx
-#   - Domain reverse proxy
-#   - Let's Encrypt SSL
+#   - Existing Docker Traefik reverse proxy integration
 #   - HTTPS Jenkins URL
 #
 # IMPORTANT:
@@ -23,7 +21,7 @@
 #
 # 1. Point your DNS A record to this VPS:
 #
-#    jenkins.skiezdigital.com -> YOUR_VPS_PUBLIC_IP
+#    jenkins.bazhilgroups.in -> YOUR_VPS_PUBLIC_IP
 #
 # 2. Make sure TCP 80 and 443 are reachable.
 #
@@ -42,7 +40,7 @@ set -Eeuo pipefail
 # CHANGE VALUES HERE FOR EACH VPS.
 #
 # Do NOT define commands such as docker, curl, apt-get,
-# systemctl, nginx or certbot as variables.
+# or systemctl as variables.
 #
 # Only reusable configuration/value variables are declared here.
 #
@@ -54,7 +52,7 @@ set -Eeuo pipefail
 # ------------------------------------------------------------
 
 # Public domain used to access Jenkins.
-JENKINS_DOMAIN="jenkins.skiezdigital.com"
+JENKINS_DOMAIN="jenkins.bazhilgroups.in"
 
 # ------------------------------------------------------------
 # 2. JENKINS SERVER
@@ -117,20 +115,14 @@ MIN_RAM_MB="2048"
 
 
 # ------------------------------------------------------------
-# 5. NGINX
+# 5. EXISTING TRAEFIK REVERSE PROXY
 # ------------------------------------------------------------
 
-# Nginx site name.
-NGINX_SITE_NAME="jenkins"
-
-# Nginx configuration path.
-NGINX_CONFIG="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
-
-# Nginx enabled site path.
-NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
-
-# Default Nginx site.
-NGINX_DEFAULT="/etc/nginx/sites-enabled/default"
+# This installer does not install, start, stop, or configure a reverse proxy.
+# Traefik is expected to be managed by the existing Docker deployment panel.
+TRAEFIK_CONTAINER_NAME="traefik"
+TRAEFIK_HOST_TARGET="host.docker.internal"
+TRAEFIK_JENKINS_PORT="8080"
 
 
 # ------------------------------------------------------------
@@ -210,12 +202,6 @@ JAVA_PACKAGES=(
     openjdk-21-jre
 )
 
-# Certbot packages.
-CERTBOT_PACKAGES=(
-    certbot
-    python3-certbot-nginx
-)
-
 # Docker packages.
 DOCKER_PACKAGES=(
     docker-ce
@@ -240,9 +226,6 @@ TOTAL_RAM_MB="0"
 AVAILABLE_DISK_GB="0"
 CURRENT_SWAP_MB="0"
 REQUIRED_SWAP_MB="0"
-SERVER_IP=""
-DNS_IP=""
-SSL_READY="false"
 JAVA_MAJOR=""
 
 
@@ -627,231 +610,25 @@ echo "Jenkins is running."
 
 
 # ============================================================
-# STEP 9 - INSTALL NGINX
+# STEP 9 - EXISTING TRAEFIK REVERSE PROXY
 # ============================================================
 
-log "STEP 9 - Installing Nginx"
-
-apt-get install -y nginx
-
-
-systemctl enable nginx
-
-systemctl start nginx
-
-
-# ============================================================
-# STEP 10 - NGINX JENKINS REVERSE PROXY
-# ============================================================
-
-log "STEP 10 - Configuring Nginx"
-
-
-cat > "$NGINX_CONFIG" <<EOF
-server {
-
-    listen ${HTTP_PORT};
-    listen [::]:${HTTP_PORT};
-
-    server_name ${JENKINS_DOMAIN};
-
-    location / {
-
-        proxy_pass http://127.0.0.1:${JENKINS_PORT};
-
-        proxy_http_version 1.1;
-
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_read_timeout 90;
-
-        proxy_redirect off;
-    }
-}
-EOF
-
-
-ln -sf \
-    "$NGINX_CONFIG" \
-    "$NGINX_ENABLED"
-
-
-# Remove default Nginx site.
-rm -f "$NGINX_DEFAULT"
-
-
-nginx -t
-
-
-systemctl reload nginx
-
-
-# ============================================================
-# STEP 11 - FIREWALL
-# ============================================================
-
-log "STEP 11 - Configuring firewall"
-
-apt-get install -y ufw
-
-
-# Allow SSH.
-ufw allow OpenSSH
-
-
-# Allow public HTTP.
-ufw allow "${HTTP_PORT}/tcp"
-
-
-# Allow public HTTPS.
-ufw allow "${HTTPS_PORT}/tcp"
-
-
-# IMPORTANT:
-#
-# Jenkins port ${JENKINS_PORT} is intentionally NOT opened.
-#
-# Traffic flow:
-#
-# Internet
-#    |
-#    | HTTPS : ${HTTPS_PORT}
-#    v
-# Nginx
-#    |
-#    | HTTP : ${JENKINS_PORT}
-#    v
-# Jenkins
-#
-
-
-ufw --force enable
-
-
-echo
-ufw status
-
-
-# ============================================================
-# STEP 12 - INSTALL CERTBOT
-# ============================================================
-
-log "STEP 12 - Installing Let's Encrypt Certbot"
-
-apt-get install -y "${CERTBOT_PACKAGES[@]}"
-
-
-# ============================================================
-# STEP 13 - DNS CHECK
-# ============================================================
-
-log "STEP 13 - Checking DNS"
-
-
-SERVER_IP=$(
-    curl -4 -s \
-        --max-time 10 \
-        "$PUBLIC_IP_SERVICE" ||
-    true
-)
-
-
-DNS_IP=$(
-    getent ahostsv4 "$JENKINS_DOMAIN" |
-    awk 'NR==1 {print $1}' ||
-    true
-)
-
-
-echo "VPS public IP : ${SERVER_IP}"
-echo "Domain IP     : ${DNS_IP}"
-
-
-if [[ -z "$SERVER_IP" ]]; then
-
-    echo
-    echo "WARNING: Could not determine VPS public IP."
-    echo
-    echo "SSL installation will be skipped."
-
-    SSL_READY="false"
-
-
-elif [[ -z "$DNS_IP" ]]; then
-
-    echo
-    echo "WARNING: DNS is not resolving yet."
-    echo
-    echo "Make sure:"
-    echo "${JENKINS_DOMAIN} -> ${SERVER_IP}"
-    echo
-    echo "SSL installation will be skipped."
-
-    SSL_READY="false"
-
-
-elif [[ "$DNS_IP" != "$SERVER_IP" ]]; then
-
-    echo
-    echo "WARNING: Domain does not point to this VPS."
-    echo
-    echo "Expected:"
-    echo "${SERVER_IP}"
-    echo
-    echo "Current:"
-    echo "${DNS_IP}"
-    echo
-    echo "SSL installation will be skipped."
-
-    SSL_READY="false"
-
-
-else
-
-    echo "DNS correctly points to this VPS."
-
-    SSL_READY="true"
-
+log "STEP 9 - Checking existing Docker Traefik proxy"
+
+# Traefik owns the public ports. This installer deliberately does not
+# install or configure Nginx, Certbot, UFW, or Traefik.
+if ! docker ps --format '{{.Names}}' | grep -Fxq "$TRAEFIK_CONTAINER_NAME"; then
+    error_exit "Docker Traefik container '${TRAEFIK_CONTAINER_NAME}' is not running. Refusing to modify the existing proxy."
 fi
 
-
-# ============================================================
-# STEP 14 - LET'S ENCRYPT SSL
-# ============================================================
-
-if [[ "$SSL_READY" == "true" ]]; then
-
-    log "STEP 14 - Installing Let's Encrypt SSL"
-
-
-    certbot \
-        --nginx \
-        --non-interactive \
-        --agree-tos \
-        --register-unsafely-without-email \
-        --redirect \
-        -d "$JENKINS_DOMAIN"
-
-
-    systemctl reload nginx
-
-
-else
-
-    log "STEP 14 - SSL SKIPPED"
-
-    echo "Fix DNS first, then run:"
-    echo
-
-    echo "sudo certbot --nginx -d ${JENKINS_DOMAIN}"
-
+if ! docker ps --format '{{.Names}} {{.Ports}}' | grep -Eq "^${TRAEFIK_CONTAINER_NAME} .*0\\.0\\.0\\.0:80->|^${TRAEFIK_CONTAINER_NAME} .*0\\.0\\.0\\.0:443->"; then
+    echo "WARNING: Traefik was found, but its published ports could not be detected."
+    echo "Verify that the existing panel routes ${JENKINS_DOMAIN} to Jenkins."
 fi
+
+echo "Traefik container : ${TRAEFIK_CONTAINER_NAME}"
+echo "Jenkins target     : ${TRAEFIK_HOST_TARGET}:${TRAEFIK_JENKINS_PORT}"
+echo "No Nginx, Certbot, firewall, or Traefik configuration was changed."
 
 
 # ============================================================
@@ -915,11 +692,6 @@ systemctl is-active "$DOCKER_SERVICE"
 
 
 echo
-echo "Nginx:"
-systemctl is-active nginx
-
-
-echo
 echo "Java:"
 java -version 2>&1 | head -1
 
@@ -944,11 +716,6 @@ echo "Jenkins local port:"
 ss -lntp | grep ":${JENKINS_PORT}" || true
 
 
-echo
-echo "Firewall:"
-ufw status
-
-
 # ============================================================
 # FINAL JENKINS INFORMATION
 # ============================================================
@@ -962,21 +729,11 @@ echo "============================================================"
 echo
 
 
-if [[ "$SSL_READY" == "true" ]]; then
-
-    echo "Jenkins URL:"
-    echo
-    echo "${JENKINS_URL}"
-
-else
-
-    echo "Jenkins URL:"
-    echo
-    echo "http://${JENKINS_DOMAIN}"
-    echo
-    echo "SSL was not configured because DNS was not ready."
-
-fi
+echo "Jenkins URL:"
+echo
+echo "${JENKINS_URL}"
+echo
+echo "TLS termination and HTTPS redirect are managed by existing Traefik."
 
 
 # ============================================================
@@ -1024,20 +781,8 @@ echo "Java 21                  : DONE"
 echo "Jenkins LTS              : DONE"
 echo "Jenkins Docker access    : DONE"
 echo "Jenkins service          : DONE"
-echo "Nginx                    : DONE"
-echo "Domain reverse proxy     : DONE"
-
-
-if [[ "$SSL_READY" == "true" ]]; then
-
-    echo "Let's Encrypt SSL        : DONE"
-    echo "HTTPS redirect           : DONE"
-
-else
-
-    echo "Let's Encrypt SSL        : NOT CONFIGURED"
-
-fi
+echo "Existing Traefik proxy  : VERIFIED"
+echo "Nginx/Certbot/UFW       : NOT TOUCHED"
 
 
 # ============================================================
